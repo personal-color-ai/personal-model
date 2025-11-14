@@ -8,11 +8,14 @@ from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import json
 
 import functions as f
 import skin_model as m
+from recommend.beauty import extract_products_from_plp, fetch_beauty_plp
 from recommend.musinsa import get_all_category_ranking, extract_all_categories, find_tab_outlined_module, \
     get_ranking_config
+from test import  scrape_olive_best_html
 
 app = FastAPI()
 
@@ -169,3 +172,74 @@ def musinsa_ranking_all(
     except Exception as e:
         print("musinsa ranking all error:", repr(e))
         raise HTTPException(status_code=500, detail="랭킹 조회 중 오류가 발생했습니다.")
+
+
+
+@app.get("/oliveyoung/best")
+def oliveyoung_best(
+    disp_cat_no: str = "900000100100001",
+    limit: int = 20,
+):
+    """
+    올리브영 베스트 상품 랭킹 조회 API
+
+    예:
+    GET /oliveyoung/best?disp_cat_no=900000100100001&limit=10
+    """
+    try:
+
+        disp_no = "900000100100001"
+
+        items = scrape_olive_best_html(disp_cat_no=disp_no, headless=False)
+
+        print("상품 개수:", len(items))
+
+        return JSONResponse(content=items)
+
+    except HTTPException:
+        # 이미 위에서 HTTPException으로 던진 경우 그대로 전달
+        raise
+    except Exception as e:
+        print("[ERROR] /oliveyoung/best 실패:", repr(e))
+        raise HTTPException(
+            status_code=500,
+            detail="올리브영 베스트 랭킹 조회 중 오류가 발생했습니다.",
+        )
+
+
+
+@app.get("/musinsa/beauty")
+def get_musinsa_beauty(
+    category: str = "104015",
+    page: int = 1,
+    size: int = 60,
+    color: Optional[str] = None,
+    sort_code: str = "POPULAR",
+):
+    """
+    예: /musinsa/beauty?category=104015&page=1&size=60
+    → PLP 기반 뷰티 상품 리스트 JSON 반환
+    """
+    try:
+        raw = fetch_beauty_plp(
+            category=category,
+            page=page,
+            size=size,
+            color=color,
+            sort_code=sort_code,
+        )
+        items = extract_products_from_plp(raw)
+    except requests.HTTPError as e:
+        raise HTTPException(status_code=500, detail=f"무신사 API 오류: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"서버 내부 오류: {e}")
+
+    return {
+        "category": category,
+        "page": page,
+        "size": size,
+        "color": color,
+        "sort_code": sort_code,
+        "count": len(items),
+        "items": items,
+    }
