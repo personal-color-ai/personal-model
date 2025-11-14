@@ -1,18 +1,18 @@
-import fastapi
-import functions as f
-import cv2
-from PIL import Image
-from collections import Counter
-import numpy as np
+import base64
 import os
-from fastapi import FastAPI, Request, HTTPException
+from collections import Counter
+from typing import Optional
+
+import requests
+from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi import FastAPI, File, UploadFile
-import base64
+
+import functions as f
 import skin_model as m
-import requests
-            
+from recommend.musinsa import get_all_category_ranking, extract_all_categories, find_tab_outlined_module, \
+    get_ranking_config
 
 app = FastAPI()
 
@@ -100,3 +100,72 @@ async def lip(data: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail="fail")
 
+
+# ----- FastAPI 엔드포인트 -----
+BASE_SEARCH_URL = "https://www.musinsa.com/search/goods"
+
+HEADERS = {
+    # 정중한 UA + 너무 자주 호출하지 않기 (sleep / rate limit 직접 걸어주세요)
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+}
+
+
+
+
+@app.get("/musinsa/categories")
+def musinsa_categories(store_code: str = "musinsa"):
+    """
+    현재 랭킹판에서 어떤 카테고리(depth1/depth2)가 있는지 목록만 보고 싶을 때.
+
+    예:
+      GET /musinsa/categories
+    """
+    try:
+        config = get_ranking_config(store_code=store_code, sub_pan="product")
+        tab_module = find_tab_outlined_module(config)
+        if not tab_module:
+            raise RuntimeError("TAB_OUTLINED 모듈을 찾을 수 없습니다.")
+
+        categories = extract_all_categories(tab_module)
+        return {
+            "store_code": store_code,
+            "category_count": len(categories),
+            "categories": categories,
+        }
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print("musinsa categories error:", repr(e))
+        raise HTTPException(status_code=500, detail="카테고리 조회 중 오류가 발생했습니다.")
+
+
+@app.get("/musinsa/ranking/all")
+def musinsa_ranking_all(
+    store_code: str = "musinsa",
+    sub_pan: str = "product",
+    limit_per_category: int = 20,
+):
+    """
+    모든 카테고리를 for문으로 돌면서 카테고리별 랭킹 상품들을 가져오는 엔드포인트.
+
+    예:
+      GET /musinsa/ranking/all
+      GET /musinsa/ranking/all?limit_per_category=5
+    """
+    try:
+        result = get_all_category_ranking(
+            store_code=store_code,
+            sub_pan=sub_pan,
+            limit_per_category=limit_per_category,
+        )
+        return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print("musinsa ranking all error:", repr(e))
+        raise HTTPException(status_code=500, detail="랭킹 조회 중 오류가 발생했습니다.")

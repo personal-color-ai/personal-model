@@ -11,3 +11,10 @@ requests
 validators
 colour-science
 matplotlib
+
+httpx
+beautifulsoup4
+lxml
+
+playwright
+chromium
