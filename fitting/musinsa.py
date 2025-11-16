@@ -1,14 +1,13 @@
-# main.py
-
 from typing import Optional, List, Dict, Any
 
 import requests
 from fastapi import FastAPI, HTTPException
 
-app = FastAPI()
+# ------------------------------
+# 무신사 - 패션 카테고리별 랭킹 크롤러
+# ------------------------------
 
 BASE_URL = "https://api.musinsa.com"
-
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "Accept": "application/json, text/plain, */*",
@@ -347,8 +346,4 @@ def get_all_category_ranking(
         "categories": result_categories,
     }
 
-
-# ------------------------------
-# 5. FastAPI 엔드포인트
-# ------------------------------
 
