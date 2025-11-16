@@ -1,10 +1,11 @@
-# main.py
 from typing import List, Dict, Any, Optional
 
 import requests
-from fastapi import FastAPI, HTTPException
 
-app = FastAPI()
+# ------------------------------
+# 무신사 - 뷰티 카테고리별 크롤러
+# ------------------------------
+
 
 BASE_URL = "https://api.musinsa.com"
 
