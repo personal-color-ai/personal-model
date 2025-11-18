@@ -4,14 +4,15 @@ WORKDIR /app
 
 # 1. 시스템 패키지 설치 (OpenCV, GL 라이브러리)
 RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. 의존성 설치
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
 
 # 3. Playwright 브라우저 설치
 RUN playwright install --with-deps chromium
