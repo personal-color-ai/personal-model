@@ -1,20 +1,27 @@
+import functions as fn
 import base64
 import os
 from collections import Counter
+from io import BytesIO
 
-import requests
-from fastapi import FastAPI
+import matplotlib.pyplot as plt
+from fastapi import FastAPI, File, UploadFile
 from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
-import functions as f
+import functions as fn
 import skin_model as m
-
 from fitting.crawling_controller import router as crawling_router
 
-
-app = FastAPI()
+app = FastAPI(
+    title="Personal Color Analysis API",
+    description="퍼스널컬러 분석 API - 피부색과 립컬러를 분석하여 시즌 타입을 분류합니다.",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
+)
 
 app.include_router(crawling_router)
 
@@ -30,57 +37,205 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.post("/image")
-async def image(data: dict):
 
+# 응답 모델 정의
+class SeasonProbs(BaseModel):
+    """시즌별 확률"""
+    spring: float
+    summer: float
+    autumn: float
+    winter: float
+
+
+class AnalysisResult(BaseModel):
+    """분석 결과"""
+    result: str  # "spring", "summer", "autumn", "winter" 중 하나
+    probs: SeasonProbs
+
+
+class AnalyzeResponse(BaseModel):
+    """통합 분석 API 응답"""
+    message: str
+    image: AnalysisResult
+    lip: AnalysisResult
+
+
+class ImageResponse(BaseModel):
+    """이미지 분석 API 응답"""
+    message: str
+    result: int
+    probs: list
+    chart: str
+
+
+class LipResponse(BaseModel):
+    """립 분석 API 응답"""
+    message: str
+    result: int
+    probs: list
+    chart: str
+
+
+def number_to_season(num: int) -> str:
+    """숫자를 시즌 문자열로 변환"""
+    season_map = {
+        1: "spring",
+        2: "summer",
+        3: "autumn",
+        4: "winter"
+    }
+    return season_map.get(num, "unknown")
+
+
+def reorder_probs_to_season_order(probs: list, model_order: list = [3, 1, 2, 4]) -> dict:
+    """
+    모델의 확률 배열을 시즌 순서(spring, summer, autumn, winter)로 재정렬
+
+    Args:
+        probs: 모델에서 반환된 확률 배열 (길이 4)
+        model_order: 모델 인덱스 [0,1,2,3]이 의미하는 시즌 번호 [3,1,2,4]
+                    (autumn, spring, summer, winter)
+
+    Returns:
+        {"spring": float, "summer": float, "autumn": float, "winter": float}
+    """
+    # 모델 인덱스 0,1,2,3 → 시즌 번호 3,1,2,4 → autumn, spring, summer, winter
+    season_probs = {
+        "spring": probs[1],   # 모델 인덱스 1 → spring
+        "summer": probs[2],   # 모델 인덱스 2 → summer
+        "autumn": probs[0],   # 모델 인덱스 0 → autumn
+        "winter": probs[3]    # 모델 인덱스 3 → winter
+    }
+    return season_probs
+
+
+@app.post(
+    "/image",
+    response_model=ImageResponse,
+    summary="피부색 분석",
+    description="이미지에서 피부 영역을 추출하여 퍼스널컬러 시즌 타입을 분석합니다.",
+    tags=["분석"]
+)
+async def image(file: UploadFile = File(..., description="분석할 이미지 파일 (JPG, PNG 등)")):
     try:
-        image_data = data["image"]
-        decoded_image = base64.b64decode(image_data.split(",")[1])
+        # 1️⃣ 파일 저장
+        contents = await file.read()
+        save_path = "saved.jpg"
+        with open(save_path, "wb") as out:  # ✅ out으로 변경
+            out.write(contents)
 
-        with open("saved.jpg","wb") as fi:
-            fi.write(decoded_image)
-      
-        f.save_skin_mask("saved.jpg")
-   
+        # 2️⃣ 피부 마스크 생성 (temp.jpg 생성 가정)
+        fn.save_skin_mask(save_path)
+
+        # 3️⃣ 퍼스널컬러 분류 (클래스 및 확률)
         ans = m.get_season("temp.jpg")
-        os.remove("temp.jpg")
-        os.remove("saved.jpg")
-   
+        probs = m.get_season_probs("temp.jpg")  # length 4, order 0..3
+
+        # 4️⃣ 결과 후처리
         if ans == 3:
             ans += 1
         elif ans == 0:
             ans = 3
 
-        test = {'result': ans}
-        encoded_data = base64.b64encode(str(test).encode('utf-8')).decode('utf-8')
- 
-        # response = requests.post('http://localhost:3000/output',json={'encodedData':encoded_data})
-        return JSONResponse(content={"message":"complete", 'encodedData':encoded_data,  'result': ans})
-        
+        # 5️⃣ 확률 막대그래프 생성(Base64)
+        labels = ["0", "1", "2", "3"]
+        fig, ax = plt.subplots(figsize=(4, 3), dpi=150)
+        ax.bar(labels, probs, color=["#ffb74d", "#64b5f6", "#a1887f", "#90caf9"])
+        ax.set_ylim(0, 1)
+        ax.set_ylabel("Probability")
+        ax.set_title("Season Probabilities")
+        fig.tight_layout()
+        buf = BytesIO()
+        fig.savefig(buf, format="png")
+        plt.close(fig)
+        buf.seek(0)
+        chart_b64 = base64.b64encode(buf.read()).decode("utf-8")
+        chart_data_url = f"data:image/png;base64,{chart_b64}"
+
+        return {
+            "message": "complete",
+            "result": ans,
+            "probs": probs,
+            "chart": chart_data_url
+        }
+
     except Exception as e:
-        print(e)
-        raise HTTPException(status_code=500, detail="fail")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        # 5️⃣ 임시 파일 삭제
+        for path in ("saved.jpg", "temp.jpg"):
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except:
+                    pass
 
 
-@app.post("/lip")
-async def lip(data: dict):
+# @app.post("/image")
+# async def image(data: dict):
+
+#     try:
+#         image_data = data["image"]
+#         decoded_image = base64.b64decode(image_data.split(",")[1])
+
+#         with open("saved.jpg","wb") as fi:
+#             fi.write(decoded_image)
+
+#         f.save_skin_mask("saved.jpg")
+
+#         ans = m.get_season("temp.jpg")
+#         os.remove("temp.jpg")
+#         os.remove("saved.jpg")
+
+#         if ans == 3:
+#             ans += 1
+#         elif ans == 0:
+#             ans = 3
+
+#         test = {'result': ans}
+#         encoded_data = base64.b64encode(str(test).encode('utf-8')).decode('utf-8')
+
+#         # response = requests.post('http://localhost:3000/output',json={'encodedData':encoded_data})
+#         return JSONResponse(content={"message":"complete", 'encodedData':encoded_data,  'result': ans})
+
+#     except Exception as e:
+#         print(e)
+#         raise HTTPException(status_code=500, detail="fail")
+
+
+@app.post(
+    "/lip",
+    response_model=LipResponse,
+    summary="립컬러 분석",
+    description="이미지에서 립 영역을 추출하여 퍼스널컬러 시즌 타입을 분석합니다.",
+    tags=["분석"]
+)
+async def lip(file: UploadFile = File(..., description="분석할 이미지 파일 (JPG, PNG 등)")):
     try:
-        image_data = data["image"]
-        decoded_image = base64.b64decode(image_data.split(",")[1])
-       
-        with open("saved.jpg","wb") as fi:
-            fi.write(decoded_image)
-        
-        path = r"saved.jpg"
-       
-        rgb_codes = f.get_rgb_codes(path)  #check point
-     
-        random_rgb_codes = f.filter_lip_random(rgb_codes,40) #set number of randomly picked sample as 40
+        # 1️⃣ 파일 저장
+        contents = await file.read()
+        save_path = "saved.jpg"
+        with open(save_path, "wb") as out:
+            out.write(contents)
 
-        os.remove("saved.jpg")
-     
-        types = Counter(f.calc_dis(random_rgb_codes))
-    
+        # 2️⃣ RGB 코드 추출 및 분석
+        rgb_codes = fn.get_rgb_codes(save_path)
+        random_rgb_codes = fn.filter_lip_random(rgb_codes, 40)  # 40개 샘플 랜덤 선택
+
+        # 3️⃣ 각 샘플의 타입 계산
+        types = Counter(fn.calc_dis(random_rgb_codes))
+        total_samples = sum(types.values())
+
+        # 4️⃣ 퍼센트 계산 (sp, su, au, win 순서)
+        probs = [
+            types.get('sp', 0) / total_samples,  # Spring (result=1)
+            types.get('su', 0) / total_samples,  # Summer (result=2)
+            types.get('au', 0) / total_samples,  # Autumn (result=3)
+            types.get('win', 0) / total_samples  # Winter (result=4)
+        ]
+
+        # 5️⃣ 가장 높은 확률을 가진 타입 결정
         max_value_key = max(types, key=types.get)
         print(max_value_key)
         if max_value_key == 'sp':
@@ -92,27 +247,117 @@ async def lip(data: dict):
         elif max_value_key == 'win':
             result = 4
         
-        data = {'image':image_data,'result':result}
-        encoded_data = base64.b64encode(str(data).encode('utf-8')).decode('utf-8')        
-        response = requests.post("http://localhost:3000/output2", json={'encodedData':encoded_data})
-        
-        print(response)
-        
-        return JSONResponse(content={"message":"complete"})
+        # 6️⃣ 확률 막대그래프 생성(Base64)
+        labels = ["1", "2", "3", "4"]  # Spring, Summer, Autumn, Winter
+        fig, ax = plt.subplots(figsize=(4, 3), dpi=150)
+        ax.bar(labels, probs, color=["#ffb74d", "#64b5f6", "#a1887f", "#90caf9"])
+        ax.set_ylim(0, 1)
+        ax.set_ylabel("Probability")
+        ax.set_title("Lip Color Probabilities")
+        fig.tight_layout()
+        buf = BytesIO()
+        fig.savefig(buf, format="png")
+        plt.close(fig)
+        buf.seek(0)
+        chart_b64 = base64.b64encode(buf.read()).decode("utf-8")
+        chart_data_url = f"data:image/png;base64,{chart_b64}"
+
+        return {
+            "message": "complete",
+            "result": result,
+            "probs": probs,
+            "chart": chart_data_url
+        }
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail="fail")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        # 7️⃣ 임시 파일 삭제
+        if os.path.exists("saved.jpg"):
+            try:
+                os.remove("saved.jpg")
+            except:
+                pass
 
 
-# ----- FastAPI 엔드포인트 -----
-BASE_SEARCH_URL = "https://www.musinsa.com/search/goods"
+@app.post(
+    "/analyze",
+    response_model=AnalyzeResponse,
+    summary="통합 분석 (피부색 + 립컬러)",
+    description="이미지에서 피부색과 립컬러를 동시에 분석하여 각각의 시즌 타입과 확률을 반환합니다. 차트는 포함하지 않으며, 프론트엔드에서 probs 값으로 직접 그려야 합니다.",
+    tags=["통합 분석"]
+)
+async def analyze(file: UploadFile = File(..., description="분석할 이미지 파일 (JPG, PNG 등)")):
+    """
+    립컬러와 피부색을 한번에 분석하여 결과값과 확률을 반환합니다.
 
-HEADERS = {
-    # 정중한 UA + 너무 자주 호출하지 않기 (sleep / rate limit 직접 걸어주세요)
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-}
+    - **image**: 피부색 분석 결과
+        - result: "spring", "summer", "autumn", "winter" 중 하나
+        - probs: 각 시즌별 확률 (0~1)
+
+    - **lip**: 립컬러 분석 결과
+        - result: "spring", "summer", "autumn", "winter" 중 하나
+        - probs: 각 시즌별 확률 (0~1)
+
+    차트는 포함하지 않습니다.
+    """
+    try:
+        # 1️⃣ 파일 저장
+        contents = await file.read()
+        save_path = "saved.jpg"
+        with open(save_path, "wb") as out:
+            out.write(contents)
+
+        # 2️⃣ 피부색 분석 (image)
+        fn.save_skin_mask(save_path)
+        image_probs_raw = m.get_season_probs("temp.jpg")  # length 4, order 0..3
+
+        # 확률을 시즌 순서로 재정렬
+        image_probs = reorder_probs_to_season_order(image_probs_raw)
+
+        # 재정렬된 확률에서 가장 높은 값을 가진 시즌 찾기
+        image_result = max(image_probs, key=image_probs.get)
+
+        # 3️⃣ 립컬러 분석 (lip)
+        rgb_codes = fn.get_rgb_codes(save_path)
+        random_rgb_codes = fn.filter_lip_random(rgb_codes, 40)  # 40개 샘플 랜덤 선택
+
+        types = Counter(fn.calc_dis(random_rgb_codes))
+        total_samples = sum(types.values())
+
+        # 퍼센트 계산 (spring, summer, autumn, winter 순서)
+        lip_probs = {
+            "spring": types.get('sp', 0) / total_samples,
+            "summer": types.get('su', 0) / total_samples,
+            "autumn": types.get('au', 0) / total_samples,
+            "winter": types.get('win', 0) / total_samples
+        }
+
+        # 확률에서 가장 높은 값을 가진 시즌 찾기
+        lip_result = max(lip_probs, key=lip_probs.get)
+
+        return {
+            "message": "complete",
+            "image": {
+                "result": image_result,
+                "probs": image_probs
+            },
+            "lip": {
+                "result": lip_result,
+                "probs": lip_probs
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        # 4️⃣ 임시 파일 삭제
+        for path in ("saved.jpg", "temp.jpg"):
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except:
+                    pass
 
