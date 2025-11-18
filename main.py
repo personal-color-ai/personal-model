@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 import functions as f
 import skin_model as m
 
-from recommend.crawling_controller import router as crawling_router
+from fitting.crawling_controller import router as crawling_router
 
 
 app = FastAPI()

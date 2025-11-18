@@ -5,11 +5,11 @@ from fastapi import APIRouter
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
-from recommend.beauty import extract_products_from_plp, fetch_beauty_plp
-from recommend.musinsa import get_all_category_ranking, extract_all_categories, find_tab_outlined_module, \
+from fitting.beauty import extract_products_from_plp, fetch_beauty_plp
+from fitting.musinsa import get_all_category_ranking, extract_all_categories, find_tab_outlined_module, \
     get_ranking_config
-from recommend.option import fetch_goods_detail_options_json, extract_goods_options
-from recommend.review import fetch_picture_reviews_json, extract_picture_reviews
+from fitting.option import fetch_goods_detail_options_json, extract_goods_options
+from fitting.review import fetch_picture_reviews_json, extract_picture_reviews
 from test import scrape_olive_best_html
 
 
