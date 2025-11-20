@@ -1,23 +1,25 @@
-import fastapi
 import functions as fn
-import cv2
-from PIL import Image
-from collections import Counter
-import numpy as np
-import os
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from fastapi import FastAPI, File, UploadFile
-from pydantic import BaseModel
-from typing import Dict
 import base64
+import os
+from collections import Counter
+from io import BytesIO
+
+import matplotlib.pyplot as plt
+from fastapi import FastAPI, File, UploadFile
+from fastapi import HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+import functions as fn
 import skin_model as m
+
 import requests
 from io import BytesIO
 import matplotlib.pyplot as plt
 from PIL import Image as PILImage
             
+from fitting.crawling_controller import router as crawling_router
+
 
 app = FastAPI(
     title="Personal Color Analysis API",
@@ -27,6 +29,8 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json"
 )
+
+app.include_router(crawling_router)
 
 origins = [
     "http://localhost:3000"  # 스프링 부트 애플리케이션이 실행 중인 도메인
@@ -94,12 +98,12 @@ def number_to_season(num: int) -> str:
 def reorder_probs_to_season_order(probs: list, model_order: list = [3, 1, 2, 4]) -> dict:
     """
     모델의 확률 배열을 시즌 순서(spring, summer, autumn, winter)로 재정렬
-    
+
     Args:
         probs: 모델에서 반환된 확률 배열 (길이 4)
         model_order: 모델 인덱스 [0,1,2,3]이 의미하는 시즌 번호 [3,1,2,4]
                     (autumn, spring, summer, winter)
-    
+
     Returns:
         {"spring": float, "summer": float, "autumn": float, "winter": float}
     """
@@ -185,13 +189,13 @@ async def image(file: UploadFile = File(..., description="분석할 이미지 �
 
 #         with open("saved.jpg","wb") as fi:
 #             fi.write(decoded_image)
-      
+
 #         f.save_skin_mask("saved.jpg")
-   
+
 #         ans = m.get_season("temp.jpg")
 #         os.remove("temp.jpg")
 #         os.remove("saved.jpg")
-   
+
 #         if ans == 3:
 #             ans += 1
 #         elif ans == 0:
@@ -199,10 +203,10 @@ async def image(file: UploadFile = File(..., description="분석할 이미지 �
 
 #         test = {'result': ans}
 #         encoded_data = base64.b64encode(str(test).encode('utf-8')).decode('utf-8')
- 
+
 #         # response = requests.post('http://localhost:3000/output',json={'encodedData':encoded_data})
 #         return JSONResponse(content={"message":"complete", 'encodedData':encoded_data,  'result': ans})
-        
+
 #     except Exception as e:
 #         print(e)
 #         raise HTTPException(status_code=500, detail="fail")
@@ -222,15 +226,15 @@ async def lip(file: UploadFile = File(..., description="분석할 이미지 파�
         save_path = "saved.jpg"
         with open(save_path, "wb") as out:
             out.write(contents)
-        
+
         # 2️⃣ RGB 코드 추출 및 분석
         rgb_codes = fn.get_rgb_codes(save_path)
         random_rgb_codes = fn.filter_lip_random(rgb_codes, 40)  # 40개 샘플 랜덤 선택
-        
+
         # 3️⃣ 각 샘플의 타입 계산
         types = Counter(fn.calc_dis(random_rgb_codes))
         total_samples = sum(types.values())
-        
+
         # 4️⃣ 퍼센트 계산 (sp, su, au, win 순서)
         probs = [
             types.get('sp', 0) / total_samples,  # Spring (result=1)
@@ -238,7 +242,7 @@ async def lip(file: UploadFile = File(..., description="분석할 이미지 파�
             types.get('au', 0) / total_samples,  # Autumn (result=3)
             types.get('win', 0) / total_samples  # Winter (result=4)
         ]
-        
+
         # 5️⃣ 가장 높은 확률을 가진 타입 결정
         max_value_key = max(types, key=types.get)
         print(max_value_key)
@@ -275,7 +279,7 @@ async def lip(file: UploadFile = File(..., description="분석할 이미지 파�
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
     finally:
         # 7️⃣ 임시 파일 삭제
         if os.path.exists("saved.jpg"):
@@ -295,19 +299,19 @@ async def lip(file: UploadFile = File(..., description="분석할 이미지 파�
 async def analyze(file: UploadFile = File(..., description="분석할 이미지 파일 (JPG, PNG 등)")):
     """
     피부색, 립컬러, 눈동자를 한번에 분석하여 결과값과 확률을 반환합니다.
-    
-    - **image**: 피부색 분석 결과
-        - result: "spring", "summer", "autumn", "winter" 중 하나
-        - probs: 각 시즌별 확률 (0~1)
-    
-    - **lip**: 립컬러 분석 결과
-        - result: "spring", "summer", "autumn", "winter" 중 하나
-        - probs: 각 시즌별 확률 (0~1)
-    
-    - **eye**: 눈동자 색상 분석 결과
-        - result: "spring", "summer", "autumn", "winter" 중 하나
-        - probs: 각 시즌별 확률 (0~1)
-    
+
+    - **image**: 피부색 분석 결과  
+      - result: "spring", "summer", "autumn", "winter" 중 하나  
+      - probs: 각 시즌별 확률 (0~1)
+
+    - **lip**: 립컬러 분석 결과  
+      - result: "spring", "summer", "autumn", "winter" 중 하나  
+      - probs: 각 시즌별 확률 (0~1)
+
+    - **eye**: 눈동자 색상 분석 결과  
+      - result: "spring", "summer", "autumn", "winter" 중 하나  
+      - probs: 각 시즌별 확률 (0~1)
+
     차트는 포함하지 않습니다.
     """
     try:
@@ -320,20 +324,20 @@ async def analyze(file: UploadFile = File(..., description="분석할 이미지 
         # 2️⃣ 피부색 분석 (image)
         fn.save_skin_mask(save_path)
         image_probs_raw = m.get_season_probs("temp.jpg")  # length 4, order 0..3
-        
+
         # 확률을 시즌 순서로 재정렬
         image_probs = reorder_probs_to_season_order(image_probs_raw)
-        
+
         # 재정렬된 확률에서 가장 높은 값을 가진 시즌 찾기
         image_result = max(image_probs, key=image_probs.get)
 
         # 3️⃣ 립컬러 분석 (lip)
         rgb_codes = fn.get_rgb_codes(save_path)
         random_rgb_codes = fn.filter_lip_random(rgb_codes, 40)  # 40개 샘플 랜덤 선택
-        
+
         types = Counter(fn.calc_dis(random_rgb_codes))
         total_samples = sum(types.values())
-        
+
         # 퍼센트 계산 (spring, summer, autumn, winter 순서)
         lip_probs = {
             "spring": types.get('sp', 0) / total_samples,
@@ -341,7 +345,7 @@ async def analyze(file: UploadFile = File(..., description="분석할 이미지 
             "autumn": types.get('au', 0) / total_samples,
             "winter": types.get('win', 0) / total_samples
         }
-        
+
         # 확률에서 가장 높은 값을 가진 시즌 찾기
         lip_result = max(lip_probs, key=lip_probs.get)
 
@@ -387,7 +391,7 @@ async def analyze(file: UploadFile = File(..., description="분석할 이미지 
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
     finally:
         # 4️⃣ 임시 파일 삭제
         for path in ("saved.jpg", "temp.jpg"):
