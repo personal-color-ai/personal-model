@@ -20,20 +20,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # 1. 현재 GitHub Runner의 공인 IP 얻기 (AWS 보안 그룹용)
-      - name: Get GitHub Runner IP
-        id: ip
-        uses: haythem/public-ip@v1.3
-
-      # 2. AWS 자격 증명 설정 (보안 그룹 수정을 위해 필요)
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      # 3. 이미지 빌드 및 푸시
+      # 이미지 빌드 및 푸시
       - name: Build and Push Python
         uses: docker/build-push-action@v5
         with:
@@ -45,34 +32,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # 4. 보안 그룹에 현재 IP만 '쏙' 넣어주기 (22번 포트 개방)
-      - name: Add IP to Security Group
-        run: |
-          aws ec2 authorize-security-group-ingress \
-            --group-id ${{ secrets.AWS_SG_ID }} \
-            --protocol tcp \
-            --port 22 \
-            --cidr ${{ steps.ip.outputs.ipv4 }}/32
-
-      # 5. EC2 배포 (파이썬 컨테이너만 재시작)
-      - name: Deploy to EC2
+      # 2. 오라클 VM에 배포 (파이썬 컨테이너만 재시작)
+      - name: Deploy to Oracle VM
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_KEY }}
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ubuntu
+          key: ${{ secrets.ORACLE_SSH_KEY }}
           script: |
             cd /home/ubuntu/project
             sudo docker compose pull facer
             sudo docker compose up -d --no-deps facer
             sudo docker image prune -f
-
-      # 6. (중요) 작업 끝나면 IP 다시 제거 (실패해도 실행되도록 if: always())
-      - name: Remove IP from Security Group
-        if: always()
-        run: |
-          aws ec2 revoke-security-group-ingress \
-            --group-id ${{ secrets.AWS_SG_ID }} \
-            --protocol tcp \
-            --port 22 \
-            --cidr ${{ steps.ip.outputs.ipv4 }}/32
