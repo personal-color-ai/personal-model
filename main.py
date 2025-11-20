@@ -12,7 +12,14 @@ from pydantic import BaseModel
 
 import functions as fn
 import skin_model as m
+
+import requests
+from io import BytesIO
+import matplotlib.pyplot as plt
+from PIL import Image as PILImage
+            
 from fitting.crawling_controller import router as crawling_router
+
 
 app = FastAPI(
     title="Personal Color Analysis API",
@@ -58,6 +65,7 @@ class AnalyzeResponse(BaseModel):
     message: str
     image: AnalysisResult
     lip: AnalysisResult
+    eye: AnalysisResult
 
 
 class ImageResponse(BaseModel):
@@ -284,21 +292,25 @@ async def lip(file: UploadFile = File(..., description="분석할 이미지 파�
 @app.post(
     "/analyze",
     response_model=AnalyzeResponse,
-    summary="통합 분석 (피부색 + 립컬러)",
-    description="이미지에서 피부색과 립컬러를 동시에 분석하여 각각의 시즌 타입과 확률을 반환합니다. 차트는 포함하지 않으며, 프론트엔드에서 probs 값으로 직접 그려야 합니다.",
+    summary="통합 분석 (피부색 + 립컬러 + 눈동자)",
+    description="이미지에서 피부색, 립컬러, 눈동자를 동시에 분석하여 각각의 시즌 타입과 확률을 반환합니다. 차트는 포함하지 않으며, 프론트엔드에서 probs 값으로 직접 그려야 합니다.",
     tags=["통합 분석"]
 )
 async def analyze(file: UploadFile = File(..., description="분석할 이미지 파일 (JPG, PNG 등)")):
     """
-    립컬러와 피부색을 한번에 분석하여 결과값과 확률을 반환합니다.
+    피부색, 립컬러, 눈동자를 한번에 분석하여 결과값과 확률을 반환합니다.
 
-    - **image**: 피부색 분석 결과
-        - result: "spring", "summer", "autumn", "winter" 중 하나
-        - probs: 각 시즌별 확률 (0~1)
+    - **image**: 피부색 분석 결과  
+      - result: "spring", "summer", "autumn", "winter" 중 하나  
+      - probs: 각 시즌별 확률 (0~1)
 
-    - **lip**: 립컬러 분석 결과
-        - result: "spring", "summer", "autumn", "winter" 중 하나
-        - probs: 각 시즌별 확률 (0~1)
+    - **lip**: 립컬러 분석 결과  
+      - result: "spring", "summer", "autumn", "winter" 중 하나  
+      - probs: 각 시즌별 확률 (0~1)
+
+    - **eye**: 눈동자 색상 분석 결과  
+      - result: "spring", "summer", "autumn", "winter" 중 하나  
+      - probs: 각 시즌별 확률 (0~1)
 
     차트는 포함하지 않습니다.
     """
@@ -337,6 +349,30 @@ async def analyze(file: UploadFile = File(..., description="분석할 이미지 
         # 확률에서 가장 높은 값을 가진 시즌 찾기
         lip_result = max(lip_probs, key=lip_probs.get)
 
+        # 4️⃣ 눈 분석 (eye)
+        eye_rgb_codes = fn.get_eye_rgb_codes(save_path)
+        
+        # 눈 샘플 수가 충분한지 확인하고 랜덤 샘플링
+        if len(eye_rgb_codes) > 40:
+            random_indices = np.random.randint(0, len(eye_rgb_codes), 40)
+            random_eye_rgb_codes = eye_rgb_codes[random_indices]
+        else:
+            random_eye_rgb_codes = eye_rgb_codes  # 샘플이 적으면 전부 사용
+        
+        eye_types = Counter(fn.calc_dis(random_eye_rgb_codes))
+        eye_total_samples = sum(eye_types.values())
+        
+        # 퍼센트 계산 (spring, summer, autumn, winter 순서)
+        eye_probs = {
+            "spring": eye_types.get('sp', 0) / eye_total_samples if eye_total_samples > 0 else 0.25,
+            "summer": eye_types.get('su', 0) / eye_total_samples if eye_total_samples > 0 else 0.25,
+            "autumn": eye_types.get('au', 0) / eye_total_samples if eye_total_samples > 0 else 0.25,
+            "winter": eye_types.get('win', 0) / eye_total_samples if eye_total_samples > 0 else 0.25
+        }
+        
+        # 확률에서 가장 높은 값을 가진 시즌 찾기
+        eye_result = max(eye_probs, key=eye_probs.get)
+
         return {
             "message": "complete",
             "image": {
@@ -346,6 +382,10 @@ async def analyze(file: UploadFile = File(..., description="분석할 이미지 
             "lip": {
                 "result": lip_result,
                 "probs": lip_probs
+            },
+            "eye": {
+                "result": eye_result,
+                "probs": eye_probs
             }
         }
 
@@ -355,6 +395,58 @@ async def analyze(file: UploadFile = File(..., description="분석할 이미지 
     finally:
         # 4️⃣ 임시 파일 삭제
         for path in ("saved.jpg", "temp.jpg"):
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except:
+                    pass
+
+
+@app.post(
+    "/visualize",
+    summary="마스크 시각화",
+    description="이미지에서 얼굴 파싱 결과를 시각화합니다. 눈(파란색), 입술(빨간색), 피부(노란색) 영역이 반투명하게 표시됩니다.",
+    tags=["시각화"]
+)
+async def visualize(file: UploadFile = File(..., description="시각화할 이미지 파일 (JPG, PNG 등)")):
+    """
+    얼굴 파싱 마스크를 시각화하여 반환합니다.
+    
+    - **눈 영역**: 파란색으로 표시
+    - **입술 영역**: 빨간색으로 표시  
+    - **피부 영역**: 노란색으로 표시
+    
+    원본 이미지 위에 각 영역이 반투명하게 오버레이됩니다.
+    """
+    try:
+        # 1️⃣ 파일 저장
+        contents = await file.read()
+        save_path = "saved_vis.jpg"
+        with open(save_path, "wb") as out:
+            out.write(contents)
+
+        # 2️⃣ 마스크 시각화
+        vis_img = fn.visualize_masks(save_path, "mask_vis_temp.jpg")
+        
+        # 3️⃣ Base64로 인코딩
+        vis_img_pil = PILImage.fromarray(vis_img)
+        buf = BytesIO()
+        vis_img_pil.save(buf, format="JPEG", quality=95)
+        buf.seek(0)
+        img_b64 = base64.b64encode(buf.read()).decode("utf-8")
+        img_data_url = f"data:image/jpeg;base64,{img_b64}"
+
+        return {
+            "message": "complete",
+            "image": img_data_url
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    finally:
+        # 4️⃣ 임시 파일 삭제
+        for path in ("saved_vis.jpg", "mask_vis_temp.jpg"):
             if os.path.exists(path):
                 try:
                     os.remove(path)

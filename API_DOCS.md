@@ -168,3 +168,5 @@ ResponseEntity<Map> response = restTemplate.exchange(
 - **500 Internal Server Error**: 이미지 처리 중 오류 발생
 - 응답의 `detail` 필드에 에러 메시지가 포함됩니다
 
+
+
