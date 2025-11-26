@@ -5,11 +5,11 @@ from fastapi import APIRouter
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
-from fitting.beauty import extract_products_from_plp, fetch_beauty_plp
-from fitting.musinsa import get_all_category_ranking, extract_all_categories, find_tab_outlined_module, \
+from fitting.crawling.beauty import extract_products_from_plp, fetch_beauty_plp
+from fitting.crawling.musinsa import get_all_category_ranking, extract_all_categories, find_tab_outlined_module, \
     get_ranking_config
-from fitting.option import fetch_goods_detail_options_json, extract_goods_options
-from fitting.review import fetch_picture_reviews_json, extract_picture_reviews
+from fitting.crawling.option import fetch_goods_detail_options_json, extract_goods_options
+from fitting.crawling.review import fetch_picture_reviews_json, extract_picture_reviews
 from test import scrape_olive_best_html
 
 
@@ -72,7 +72,7 @@ def musinsa_ranking_all(
 
 @router.post("/musinsa/beauty")
 def get_musinsa_beauty(
-    category: str = "104015",
+    category: str,
     page: int = 1,
     size: int = 60,
     color: Optional[str] = None,
