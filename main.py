@@ -1,10 +1,11 @@
-import functions as fn
 import base64
 import os
 from collections import Counter
 from io import BytesIO
 
 import matplotlib.pyplot as plt
+import numpy as np
+from PIL import Image as PILImage
 from fastapi import FastAPI, File, UploadFile
 from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,15 +13,8 @@ from pydantic import BaseModel
 
 import functions as fn
 import skin_model as m
-
-import requests
-from io import BytesIO
-import matplotlib.pyplot as plt
-from PIL import Image as PILImage
-import numpy as np
-
 from fitting.crawling_controller import router as crawling_router
-
+from fitting.embedding_controller import router as embedding_router
 
 app = FastAPI(
     title="Personal Color Analysis API",
@@ -32,6 +26,7 @@ app = FastAPI(
 )
 
 app.include_router(crawling_router)
+app.include_router(embedding_router)
 
 origins = [
     "http://localhost:8000"  # 스프링 부트 애플리케이션이 실행 중인 도메인
