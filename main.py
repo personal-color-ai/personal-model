@@ -1,10 +1,10 @@
 import base64
-import base64
 import os
 from collections import Counter
 from io import BytesIO
 
 import matplotlib.pyplot as plt
+import numpy as np
 from PIL import Image as PILImage
 from fastapi import FastAPI, File, UploadFile
 from fastapi import HTTPException
@@ -29,7 +29,7 @@ app.include_router(crawling_router)
 app.include_router(embedding_router)
 
 origins = [
-    "http://localhost:3000"  # 스프링 부트 애플리케이션이 실행 중인 도메인
+    "http://localhost:8000"  # 스프링 부트 애플리케이션이 실행 중인 도메인
 ]
 
 app.add_middleware(
@@ -241,7 +241,6 @@ async def lip(file: UploadFile = File(..., description="분석할 이미지 파�
 
         # 5️⃣ 가장 높은 확률을 가진 타입 결정
         max_value_key = max(types, key=types.get)
-        print(max_value_key)
         if max_value_key == 'sp':
             result = 1
         elif max_value_key == 'su':
@@ -368,7 +367,6 @@ async def analyze(file: UploadFile = File(..., description="분석할 이미지 
         
         # 확률에서 가장 높은 값을 가진 시즌 찾기
         eye_result = max(eye_probs, key=eye_probs.get)
-
         return {
             "message": "complete",
             "image": {
