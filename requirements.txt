@@ -18,3 +18,7 @@ lxml
 
 playwright
 chromium
+
+pydantic
+chromadb
+sentence-transformers
